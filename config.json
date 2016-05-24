@@ -1,7 +1,7 @@
-// config.json
 {
-  "Port": "5555",
+  "Port": "5556",
   "JSONEndpointPort": "8080",
+  "ServerTlsPort": "13345",
   "Hostname": "localhost",
   "HasEnteredTheRoomMessage": "[%s] has entered the room \"%s\"",
   "HasLeftTheRoomMessage": "[%s] has left the room \"%s\"",

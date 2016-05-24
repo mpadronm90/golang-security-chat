@@ -9,18 +9,20 @@ import (
 	/*"crypto/rsa"
 	"crypto/sha512"
 	"crypto/tls"*/
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
-	/*"net/http"
-	"net/url"*/
+	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
-
 	/*"golang.org/x/crypto/scrypt"*/)
 
 // time format for log files and JSON response
@@ -97,6 +99,8 @@ type Properties struct {
 	Port string
 	// port used for JSON server
 	JSONEndpointPort string
+	// Server TLS port
+	ServerTlsPort string
 	// message format for when someone enters a private room
 	HasEnteredTheRoomMessage string
 	// message format for when someone leaves a private room
@@ -142,6 +146,7 @@ func LoadConfig() Properties {
 		Hostname:                  dat["Hostname"].(string),
 		Port:                      dat["Port"].(string),
 		JSONEndpointPort:          dat["JSONEndpointPort"].(string),
+		ServerTlsPort:             dat["ServerTlsPort"].(string),
 		HasEnteredTheRoomMessage:  dat["HasEnteredTheRoomMessage"].(string),
 		HasLeftTheRoomMessage:     dat["HasLeftTheRoomMessage"].(string),
 		HasEnteredTheLobbyMessage: dat["HasEnteredTheLobbyMessage"].(string),
@@ -316,36 +321,50 @@ func QueryMessages(actionType string, search string, username string) []Action {
 
 // Security
 
+// respuesta del servidor
+type Resp struct {
+	Ok  bool   // true -> correcto, false -> error
+	Msg string // mensaje adicional
+}
+
+// ejemplo de tipo para un usuario
+type User struct {
+	Name string            // nombre de usuario
+	Hash []byte            // hash de la contraseña
+	Salt []byte            // sal para la contraseña
+	Data map[string]string // datos adicionales del usuario
+}
+
 // función para comprobar errores (ahorra escritura)
-func chk(e error) {
+func Chk(e error) {
 	if e != nil {
 		panic(e)
 	}
 }
 
 // función para cifrar (con AES en este caso), adjunta el IV al principio
-func encrypt(data, key []byte) (out []byte) {
+func Encrypt(data, key []byte) (out []byte) {
 	out = make([]byte, len(data)+16)    // reservamos espacio para el IV al principio
 	rand.Read(out[:16])                 // generamos el IV
 	blk, err := aes.NewCipher(key)      // cifrador en bloque (AES), usa key
-	chk(err)                            // comprobamos el error
+	Chk(err)                            // comprobamos el error
 	ctr := cipher.NewCTR(blk, out[:16]) // cifrador en flujo: modo CTR, usa IV
 	ctr.XORKeyStream(out[16:], data)    // ciframos los datos
 	return
 }
 
 // función para descifrar (con AES en este caso)
-func decrypt(data, key []byte) (out []byte) {
+func Decrypt(data, key []byte) (out []byte) {
 	out = make([]byte, len(data)-16)     // la salida no va a tener el IV
 	blk, err := aes.NewCipher(key)       // cifrador en bloque (AES), usa key
-	chk(err)                             // comprobamos el error
+	Chk(err)                             // comprobamos el error
 	ctr := cipher.NewCTR(blk, data[:16]) // cifrador en flujo: modo CTR, usa IV
 	ctr.XORKeyStream(out, data[16:])     // desciframos (doble cifrado) los datos
 	return
 }
 
 // función para comprimir
-func compress(data []byte) []byte {
+func Compress(data []byte) []byte {
 	var b bytes.Buffer      // b contendrá los datos comprimidos (tamaño variable)
 	w := zlib.NewWriter(&b) // escritor que comprime sobre b
 	w.Write(data)           // escribimos los datos
@@ -354,39 +373,152 @@ func compress(data []byte) []byte {
 }
 
 // función para descomprimir
-func decompress(data []byte) []byte {
+func Decompress(data []byte) []byte {
 	var b bytes.Buffer // b contendrá los datos descomprimidos
 
 	r, err := zlib.NewReader(bytes.NewReader(data)) // lector descomprime al leer
 
-	chk(err)         // comprobamos el error
+	Chk(err)         // comprobamos el error
 	io.Copy(&b, r)   // copiamos del descompresor (r) al buffer (b)
 	r.Close()        // cerramos el lector (buffering)
 	return b.Bytes() // devolvemos los datos descomprimidos
 }
 
 // función para codificar de []bytes a string (Base64)
-func encode64(data []byte) string {
+func Encode64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data) // sólo utiliza caracteres "imprimibles"
 }
 
 // función para decodificar de string a []bytes (Base64)
-func decode64(s string) []byte {
+func Decode64(s string) []byte {
 	b, err := base64.StdEncoding.DecodeString(s) // recupera el formato original
-	chk(err)                                     // comprobamos el error
+	Chk(err)                                     // comprobamos el error
 	return b                                     // devolvemos los datos originales
 }
 
-// respuesta del servidor
-type resp struct {
-	Ok  bool   // true -> correcto, false -> error
-	Msg string // mensaje adicional
+// función para escribir una respuesta del servidor
+func Response(w io.Writer, ok bool, msg string) {
+	r := Resp{Ok: ok, Msg: msg}    // formateamos respuesta
+	rJSON, err := json.Marshal(&r) // codificamos en JSON
+	Chk(err)                       // comprobamos error
+	w.Write(rJSON)                 // escribimos el JSON resultante
 }
 
-// función para escribir una respuesta del servidor
-func response(w io.Writer, ok bool, msg string) {
-	r := resp{Ok: ok, Msg: msg}    // formateamos respuesta
-	rJSON, err := json.Marshal(&r) // codificamos en JSON
-	chk(err)                       // comprobamos error
-	w.Write(rJSON)                 // escribimos el JSON resultante
+// Función que lee la entrada de pantalla
+func ReadInput() string {
+	reader := bufio.NewReader(os.Stdin)
+	os, err := reader.ReadString('\n')
+	Chk(err)
+	return string(TrimSuffix(os, "\n"))
+}
+
+// Función auxuliar que elimina el salto de linea de un string
+func TrimSuffix(s, suffix string) string {
+	if strings.HasSuffix(s, suffix) {
+		s = s[:len(s)-len(suffix)]
+	}
+	return s
+}
+
+const (
+	sttyArg0   = "/bin/stty"
+	exec_cwdir = ""
+)
+
+// Tells the terminal to turn echo off.
+var sttyArgvEOff []string = []string{"stty", "-echo"}
+
+// Tells the terminal to turn echo on.
+var sttyArgvEOn []string = []string{"stty", "echo"}
+
+var ws syscall.WaitStatus = 0
+
+// GetPass gets input hidden from the terminal from a user.
+// This is accomplished by turning off terminal echo,
+// reading input from the user and finally turning on terminal echo.
+// prompt is a string to display before the user's input.
+func GetPass(prompt string) (passwd string, err error) {
+	sig := make(chan os.Signal, 10)
+	brk := make(chan bool)
+
+	// Display the prompt.
+	fmt.Print(prompt)
+
+	// File descriptors for stdin, stdout, and stderr.
+	fd := []uintptr{os.Stdin.Fd(), os.Stdout.Fd(), os.Stderr.Fd()}
+
+	// Setup notifications of termination signals to channel sig, create a process to
+	// watch for these signals so we can turn back on echo if need be.
+	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGKILL, syscall.SIGQUIT,
+		syscall.SIGTERM)
+	go catchSignal(fd, sig, brk)
+
+	// Turn off the terminal echo.
+	pid, err := echoOff(fd)
+	if err != nil {
+		return "", err
+	}
+
+	// Turn on the terminal echo and stop listening for signals.
+	defer close(brk)
+	defer echoOn(fd)
+
+	rd := bufio.NewReader(os.Stdin)
+	syscall.Wait4(pid, &ws, 0, nil)
+
+	line, err := rd.ReadString('\n')
+	if err == nil {
+		passwd = strings.TrimSpace(line)
+	} else {
+		err = fmt.Errorf("failed during password entry: %s", err)
+	}
+
+	// Carraige return after the user input.
+	fmt.Println("")
+
+	return passwd, err
+}
+
+// catchSignal tries to catch SIGKILL, SIGQUIT and SIGINT so that we can turn terminal
+// echo back on before the program ends.  Otherwise the user is left with echo off on
+// their terminal.
+func catchSignal(fd []uintptr, sig chan os.Signal, brk chan bool) {
+	select {
+	case <-sig:
+		echoOn(fd)
+		os.Exit(-1)
+	case <-brk:
+	}
+}
+
+func echoOff(fd []uintptr) (int, error) {
+	pid, err := syscall.ForkExec(sttyArg0, sttyArgvEOff, &syscall.ProcAttr{Dir: exec_cwdir, Files: fd})
+	if err != nil {
+		return 0, fmt.Errorf("failed turning off console echo for password entry:\n\t%s", err)
+	}
+	return pid, nil
+}
+
+// echoOn turns back on the terminal echo.
+func echoOn(fd []uintptr) {
+	// Turn on the terminal echo.
+	pid, e := syscall.ForkExec(sttyArg0, sttyArgvEOn, &syscall.ProcAttr{Dir: exec_cwdir, Files: fd})
+	if e == nil {
+		syscall.Wait4(pid, &ws, 0, nil)
+	}
+}
+
+func DecodeResponse(payload *http.Response) Resp {
+	var dat Resp
+	body, _ := ioutil.ReadAll(payload.Body)
+	err := json.Unmarshal(body, &dat)
+	CheckForError(err, "Invalid JSON in Server Response")
+	return dat
+}
+
+func PostForm(client *http.Client, data url.Values) *http.Response {
+	properties := LoadConfig()
+	r, err := client.PostForm("https://localhost:"+properties.ServerTlsPort, data)
+	Chk(err)
+	return r
 }

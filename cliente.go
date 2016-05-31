@@ -24,13 +24,13 @@ import (
 	"strings"
 	/*"golang.org/x/crypto/scrypt"*/)
 
-// input message regular expression (look for a command /whatever)
+// mensaje de entrada de expresiones regulares (busque un comando /lo_que_sea )
 var standardInputMessageRegex, _ = regexp.Compile(`^\/([^\s]*)\s*(.*)$`)
 
-// chat server command /command [username] body contents
+// comando de servidor chat /comando [username] contenido del cuerpo
 var chatServerResponseRegex, _ = regexp.Compile(`^\/([^\s]*)\s?(?:\[([^\]]*)\])?\s*(.*)$`)
 
-// container for chat server Command details
+// estructura contenedor del comando
 type Command struct {
 	// "leave", "message", "enter"
 	Command, Username, Body string
@@ -50,8 +50,8 @@ func client() {
 
 	switch util.ReadInput() {
 	case "1":
-		if ok, username := Login(); ok {
-			chat(username)
+		if ok, username, password := Login(); ok {
+			chat(username, password)
 		} else {
 			client()
 		}
@@ -104,7 +104,7 @@ func NewUser() {
 	pubJSON, err := json.Marshal(&keyPub) // y codificamos con JSON
 	util.Chk(err)
 
-	// ejemplo de registro
+	//Registro
 	data := url.Values{}                      // estructura para contener los valores
 	data.Set("cmd", "register")               // comando (string)
 	data.Set("user", Name)                    // usuario (string)
@@ -123,7 +123,7 @@ func NewUser() {
 	fmt.Println(response.Msg)
 }
 
-func Login() (bool, string) {
+func Login() (bool, string, string) {
 
 	fmt.Println("Introduce tu usuario y tu contraseña")
 
@@ -151,7 +151,7 @@ func Login() (bool, string) {
 	defer r.Body.Close()
 
 	fmt.Println(response.Msg)
-	return response.Ok, username
+	return response.Ok, username, password
 
 }
 
@@ -160,106 +160,108 @@ func Salir() {
 	fmt.Println("Hasta luego.")
 }
 
-func chat(username string) {
+func chat(username string, password string) {
 	properties := util.LoadConfig()
 
 	conn, err := net.Dial("tcp", properties.Hostname+":"+properties.Port)
-	util.CheckForError(err, "Connection refused")
+	util.CheckForError(err, "Conexion rechazada")
 	defer conn.Close()
 
 	fmt.Print("Modo Chat..." + "\n")
-	// we're listening to chat server commands *and* user terminal commands
-	go watchForConnectionInput(username, properties, conn)
+	// escuchando al servidor y a la consola del usuario
+	go watchForConnectionInput(username, password, properties, conn)
 	for true {
 		watchForConsoleInput(conn)
 	}
 
 }
 
-// keep watching for console input
-// send the "message" command to the chat server when we have some
+// continua escuchando la consola del usuario
+// envia un mensaje al servidor cuando recibe una peticion
 func watchForConsoleInput(conn net.Conn) {
 	reader := bufio.NewReader(os.Stdin)
 
 	for true {
 		message, err := reader.ReadString('\n')
-		util.CheckForError(err, "Lost console connection")
+		util.CheckForError(err, "Perdida la conexion")
 
 		message = strings.TrimSpace(message)
 		if message != "" {
 			command := parseInput(message)
 
 			if command.Command == "" {
-				// there is no command so treat this as a simple message to be sent out
+				// un simple mensaje
 				sendCommand("message", message, conn)
 			} else {
 				switch command.Command {
 
-				// enter a room
+				// entrar a una sala privada
 				case "enter":
 					sendCommand("enter", command.Body, conn)
 
-				// ignore someone
+				// ignorar a alguien
 				case "ignore":
 					sendCommand("ignore", command.Body, conn)
 
-				// leave a room
+				// dejar la sala
 				case "leave":
-					// leave the current room (we aren't allowing multiple rooms)
+					// dejar la sala, no permite salas de salas
 					sendCommand("leave", "", conn)
 
-				// disconnect from the chat server
+				// desconectar del servidor
 				case "disconnect":
 					sendCommand("disconnect", "", conn)
+					client()
 
 				default:
-					fmt.Printf("Unknown command \"%s\"\n", command.Command)
+					fmt.Printf("comando desconocido \"%s\"\n", command.Command)
 				}
 			}
 		}
 	}
 }
 
-// listen for any commands that come from the chat server
-// like someone entered the room, said something, or left the room
-func watchForConnectionInput(username string, properties util.Properties, conn net.Conn) {
+// escuchar los comandos que vienen desde el servidor de chat
+// ej: alguien ha entrado, alguien ha salido, alguien ha enviado un mensaje
+func watchForConnectionInput(username string, password string, properties util.Properties, conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for true {
 		message, err := reader.ReadString('\n')
-		util.CheckForError(err, "Lost server connection")
+		util.CheckForError(err, "Perdida la conexión al servidor")
 		message = strings.TrimSpace(message)
 		if message != "" {
 			Command := parseCommand(message)
 			switch Command.Command {
 
-			// the handshake - send out our username
+			//listo
 			case "ready":
-				sendCommand("user", username, conn)
+				message := autTCP(username, password)
+				sendCommand("user", message, conn)
 
-			// the user has connected to the chat server
+			// conectado
 			case "connect":
 				fmt.Printf(properties.HasEnteredTheLobbyMessage+"\n", Command.Username)
 
-			// the user has disconnected
+			// desconectado
 			case "disconnect":
 				fmt.Printf(properties.HasLeftTheLobbyMessage+"\n", Command.Username)
 
-			// the user has entered a room
+			// ha entrado a...
 			case "enter":
 				fmt.Printf(properties.HasEnteredTheRoomMessage+"\n", Command.Username, Command.Body)
 
-			// the user has left a room
+			// ha salido de...
 			case "leave":
 				fmt.Printf(properties.HasLeftTheRoomMessage+"\n", Command.Username, Command.Body)
 
-			// the user has sent a message
+			// el usuario ha enviado un mensaje
 			case "message":
 				if Command.Username != username {
 					fmt.Printf(properties.ReceivedAMessage+"\n", Command.Username, Command.Body)
 				}
 
-			// the user has connected to the chat server
+			// ignorando
 			case "ignoring":
 				fmt.Printf(properties.IgnoringMessage+"\n", Command.Body)
 			}
@@ -270,7 +272,12 @@ func watchForConnectionInput(username string, properties util.Properties, conn n
 // send a command to the chat server
 // commands are in the form of /command {command specific body content}\n
 func sendCommand(command string, body string, conn net.Conn) {
-	message := fmt.Sprintf("/%v %v\n", util.Encode(command), util.Encode(body))
+
+	// hash con SHA512 del body
+	bodyClient := sha512.Sum512([]byte(body))
+	bodyEncode := bodyClient[:32] // una mitad para el login (256 bits)
+
+	message := fmt.Sprintf("/%v %v\n", util.Encode(command), util.Encode(util.Encode64(bodyEncode))
 	conn.Write([]byte(message))
 }
 
@@ -305,4 +312,12 @@ func parseCommand(message string) Command {
 		// it's irritating that I can't return a nil value here - must be something I'm missing
 		return Command{}
 	}
+}
+
+func autTCP(username string, password string) string {
+	// hash con SHA512 de la contraseña
+	keyClient := sha512.Sum512([]byte(password))
+	keyLogin := keyClient[:32] // una mitad para el login (256 bits)
+
+	return username + ":::" + util.Encode64(keyLogin)
 }

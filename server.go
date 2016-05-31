@@ -31,7 +31,6 @@ import (
 const LOBBY = "lobby"
 
 // mapa con todos los usuarios
-// (se podría codificar en JSON y escribir/leer de disco para persistencia)
 var gUsers map[string]util.User
 
 // gestiona el modo servidor
@@ -98,28 +97,27 @@ func handler(w http.ResponseWriter, req *http.Request) {
 }
 
 func server_chat() {
-	// start the chat server
+	// Inicia el servidor de chat
 	properties := util.LoadConfig()
 	psock, err := net.Listen("tcp", ":"+properties.Port)
-	util.CheckForError(err, "Can't create server")
+	util.CheckForError(err, "Imposible crear el servidor")
 
-	fmt.Printf("Chat server started on port %v...\n", properties.Port)
+	fmt.Printf("Servidor de chat en puerto %v...\n", properties.Port)
 	go server_tls()
 
-	// start the JSON endpoing server
+	// iniciar el servidor de punto final
 	go json.Start()
 
 	for {
-		fmt.Print("Entra aqui" + "\n")
-		// accept connections
+		// conexiones aceptadas
 		conn, err := psock.Accept()
-		util.CheckForError(err, "Can't accept connections")
+		util.CheckForError(err, "No se aceptan conexiones")
 
-		// keep track of the client details
+		// llevar un registro de los datos de cliente
 		client := util.Client{Connection: conn, Room: LOBBY, Properties: properties}
 		client.Register()
 
-		// allow non-blocking client request handling
+		// manejo de las peticiones del cliente de forma no bloqueante
 		channel := make(chan string)
 		go waitForInput(channel, &client)
 		go handleInput(channel, &client, properties)
@@ -128,7 +126,7 @@ func server_chat() {
 	}
 }
 
-// wait for client input (buffered by newlines) and signal the channel
+// esperar a la entrada del usuario y la señal del canal
 func waitForInput(out chan string, client *util.Client) {
 	defer close(out)
 
@@ -136,7 +134,7 @@ func waitForInput(out chan string, client *util.Client) {
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
-			// connection has been closed, remove the client
+			// conexion cerrada, quitar al usuario de la lista de chateadores
 			client.Close(true)
 			return
 		}
@@ -144,46 +142,51 @@ func waitForInput(out chan string, client *util.Client) {
 	}
 }
 
-// listen for channel updates for a client and handle the message
-// messages must be in the format of /{action} {content} where content is optional depending on the action
-// supported actions are "user", "chat", and "quit".  the "user" must be set before any chat messages are allowed
+// escuchar las actualizaciones de canal para un cliente y manejar el mensaje
+// los mensajes deben estar en el formato de / { acción } {contenido} donde el contenido es opcional dependiendo de la acción
+// las acciones respaldadas son "user ", " chat", y "quit". el "user " debe autenticarse antes de que los mensajes de chat esten permitidos
 func handleInput(in <-chan string, client *util.Client, props util.Properties) {
 
 	for {
 		message := <-in
 		if message != "" {
+
 			message = strings.TrimSpace(message)
 			action, body := getAction(message)
 
 			if action != "" {
 				switch action {
 
-				// the user has submitted a message
+				// El ususario envia un mensaje
 				case "message":
 					util.SendClientMessage("message", body, client, false, props)
 
-				// the user has provided their username (initialization handshake)
+				// El usuario provee el nombre de usuario desde despues de la autenticación en tls
 				case "user":
-					client.Username = body
-					util.SendClientMessage("connect", "", client, false, props)
+					if ok, username := verifyUser(body); ok {
+						client.Username = username
+						util.SendClientMessage("connect", "", client, false, props)
+					} else {
+						client.Close(false)
+					}
 
-				// the user is disconnecting
+				// El usuario se desconecta
 				case "disconnect":
 					client.Close(false)
 
-				// the user is disconnecting
+				// El usuario ignora a a otro
 				case "ignore":
 					client.Ignore(body)
 					util.SendClientMessage("ignoring", body, client, false, props)
 
-				// the user is entering a room
+				// El usuario entra a una sala privada
 				case "enter":
 					if body != "" {
 						client.Room = body
 						util.SendClientMessage("enter", body, client, false, props)
 					}
 
-				// the user is leaving the current room
+				// El usuario deja la sala
 				case "leave":
 					if client.Room != LOBBY {
 						util.SendClientMessage("leave", client.Room, client, false, props)
@@ -198,12 +201,37 @@ func handleInput(in <-chan string, client *util.Client, props util.Properties) {
 	}
 }
 
-// parse out message contents (/{action} {message}) and return individual values
+// analizar el contenido del mensaje ( / { acción } { mensaje} ) y devolver los valores individuales
 func getAction(message string) (string, string) {
 	actionRegex, _ := regexp.Compile(`^\/([^\s]*)\s*(.*)$`)
 	res := actionRegex.FindAllStringSubmatch(message, -1)
+
+	body := res[0][2]
+
 	if len(res) == 1 {
-		return res[0][1], res[0][2]
+		return res[0][1], string(util.Decode64(body)[:])
 	}
 	return "", ""
+}
+
+// Verificar pass
+func verifyUser(body string) (bool, string) {
+
+	i := strings.Index(body, "%3A%3A%3A")
+	username := body[:i]
+	fmt.Print(body[:i])
+
+	pass := util.Decode64(body[i+9 : len(body)])
+
+	u, ok := gUsers[username] // ¿existe ya el usuario?
+	if !ok {
+		return false, ""
+	}
+
+	hash, _ := scrypt.Key(pass, u.Salt, 16384, 8, 1, 32) // scrypt(contraseña)
+	if bytes.Compare(u.Hash, hash) != 0 {                // comparamos
+		return false, ""
+	}
+
+	return true, username
 }

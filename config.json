@@ -3,11 +3,11 @@
   "JSONEndpointPort": "8080",
   "ServerTlsPort": "13345",
   "Hostname": "localhost",
-  "HasEnteredTheRoomMessage": "[%s] has entered the room \"%s\"",
-  "HasLeftTheRoomMessage": "[%s] has left the room \"%s\"",
-  "HasEnteredTheLobbyMessage": "[%s] has entered the lobby",
-  "HasLeftTheLobbyMessage": "[%s] has left the lobby",
-  "IgnoringMessage": "You are ignoring %s",
-  "ReceivedAMessage": "[%s] says: %s",
-  "LogFile": ""
+  "HasEnteredTheRoomMessage": "[%s] ha entrado a la sala \"%s\"",
+  "HasLeftTheRoomMessage": "[%s] ha salido de la sala \"%s\"",
+  "HasEnteredTheLobbyMessage": "[%s] ha entrado al lobby",
+  "HasLeftTheLobbyMessage": "[%s] ha salido del lobby",
+  "IgnoringMessage": "Estas ignorando a %s",
+  "ReceivedAMessage": "[%s] dice: %s",
+  "LogFile": "log.txt"
 }

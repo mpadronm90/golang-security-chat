@@ -1,18 +1,17 @@
 package util
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	/*"crypto/rsa"
-	"crypto/sha512"
-	"crypto/tls"*/
-	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	//"gopkg.in/mgo.v2"
+	//"gopkg.in/mgo.v2/bson"
 	"io"
 	"io/ioutil"
 	"net"
@@ -23,7 +22,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	/*"golang.org/x/crypto/scrypt"*/)
+)
 
 // time format for log files and JSON response
 const TIME_LAYOUT = "Jan 2 2006 15.04.05 -0700 MST"
@@ -117,8 +116,6 @@ type Properties struct {
 	LogFile string
 }
 
-// all actions (chats, enter/leave private room, connect/disconnect)
-// that have occured while the server has been running
 var actions = []Action{}
 
 // cached config properties
@@ -135,7 +132,7 @@ func LoadConfig() Properties {
 	pwd, _ := os.Getwd()
 
 	payload, err := ioutil.ReadFile(pwd + "/config.json")
-	CheckForError(err, "Unable to read config file")
+	CheckForError(err, "No se puede leer el fichero json")
 
 	var dat map[string]interface{}
 	err = json.Unmarshal(payload, &dat)
@@ -201,7 +198,7 @@ func SendClientMessage(messageType string, message string, client *Client, thisC
 				(!thisClientOnly && _client.Username != "") {
 
 				// you should only see a message if you are in the same room
-				if messageType == "message" && client.Room != _client.Room || _client.IsIgnoring(client.Username) {
+				if messageType == "mensaje" && client.Room != _client.Room || _client.IsIgnoring(client.Username) {
 					continue
 				}
 
@@ -245,16 +242,6 @@ func replace(fromTokens []string, toTokens []string, value string) string {
 	return value
 }
 
-// log an action to the log file
-// action: the action
-//   - "enter": enter a room
-//   - "leave": leave a room
-//   - "connect": connect to the lobby
-//   - "disconnect": disconnect from the lobby
-//   - "message": post a message
-//   - "ignore": ignore a user
-// message: message/context appropriate for the action
-// client: the initiating client
 func LogAction(action string, message string, client *Client, props Properties) {
 	ip := client.Connection.RemoteAddr().String()
 	timestamp := time.Now().Format(TIME_LAYOUT)
@@ -522,3 +509,39 @@ func PostForm(client *http.Client, data url.Values) *http.Response {
 	Chk(err)
 	return r
 }
+
+/*
+func CrearUsuario(user User) bool {
+	session, err := mgo.Dial("localhost")
+	Chk(err)
+
+	defer session.Close()
+
+	session.SetMode(mgo.Monotonic, true)
+	c := session.DB("chat").C("users")
+
+	err = c.Insert(user)
+	Chk(err)
+
+	return true
+}
+
+func ExisteUsuario(username string) User {
+	session, err := mgo.Dial("localhost")
+	Chk(err)
+
+	defer session.Close()
+
+	session.SetMode(mgo.Monotonic, true)
+	c := session.DB("chat").C("users")
+
+	result := User{}
+	err = c.Find(bson.M{"Name": username}).One(&result)
+	Chk(err)
+
+	println(result.Name)
+
+	return result
+}
+
+*/

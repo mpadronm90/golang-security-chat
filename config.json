@@ -7,7 +7,7 @@
   "HasLeftTheRoomMessage": "[%s] ha salido de la sala \"%s\"",
   "HasEnteredTheLobbyMessage": "[%s] ha entrado al lobby",
   "HasLeftTheLobbyMessage": "[%s] ha salido del lobby",
-  "IgnoringMessage": "Estas ignorando a %s",
+  "IgnoringMessage": "Ignorado %s",
   "ReceivedAMessage": "[%s] dice: %s",
   "LogFile": "log.txt"
 }

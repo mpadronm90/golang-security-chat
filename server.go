@@ -3,29 +3,15 @@ package main
 
 import (
 	"./util"
-	"bytes"
-	/*"compress/zlib"
-	"crypto/aes"
-	"crypto/cipher"*/
-	"crypto/rand"
-	/*"crypto/rsa"
-	"crypto/sha512"
-	"crypto/tls"
-	"encoding/base64"*/
-	/*"encoding/json"*/
-	"fmt"
-	/*"io"*/
-	"net/http"
-	/*"net/url"*/
-	/*"os"*/
-	/*"./endpoint/auth"*/
-	"./endpoint/json"
 	"bufio"
+	"bytes"
+	"crypto/rand"
+	"fmt"
+	"golang.org/x/crypto/scrypt"
 	"net"
+	"net/http"
 	"regexp"
 	"strings"
-
-	"golang.org/x/crypto/scrypt"
 )
 
 const LOBBY = "lobby"
@@ -42,7 +28,6 @@ func server_tls() {
 	properties := util.LoadConfig()
 	gUsers = make(map[string]util.User) // inicializamos mapa de usuarios
 	fmt.Println("Server ::  TLS/HTTP :: Security Chat :: Port " + properties.ServerTlsPort)
-
 	http.HandleFunc("/", handler) // asignamos un handler global
 	// escuchamos el puerto 10443 con https y comprobamos el error
 	util.Chk(http.ListenAndServeTLS(":"+properties.ServerTlsPort, "cert.pem", "key.pem", nil))
@@ -68,6 +53,7 @@ func handler(w http.ResponseWriter, req *http.Request) {
 		u.Hash, _ = scrypt.Key(password, u.Salt, 16384, 8, 1, 32)
 
 		_, ok := gUsers[u.Name] // ¿existe ya el usuario?
+		/*util.ExisteUsuario(u.Name) // ¿existe ya el usuario?*/
 		if ok {
 			util.Response(w, false, "Usuario ya registrado")
 		} else {
@@ -102,11 +88,8 @@ func server_chat() {
 	psock, err := net.Listen("tcp", ":"+properties.Port)
 	util.CheckForError(err, "Imposible crear el servidor")
 
-	fmt.Printf("Servidor de chat en puerto %v...\n", properties.Port)
+	// Módulo de autenticación
 	go server_tls()
-
-	// iniciar el servidor de punto final
-	go json.Start()
 
 	for {
 		// conexiones aceptadas
@@ -122,7 +105,7 @@ func server_chat() {
 		go waitForInput(channel, &client)
 		go handleInput(channel, &client, properties)
 
-		util.SendClientMessage("ready", properties.Port, &client, true, properties)
+		util.SendClientMessage("listo", properties.Port, &client, true, properties)
 	}
 }
 
@@ -158,43 +141,43 @@ func handleInput(in <-chan string, client *util.Client, props util.Properties) {
 				switch action {
 
 				// El ususario envia un mensaje
-				case "message":
-					util.SendClientMessage("message", body, client, false, props)
+				case "mensaje":
+					util.SendClientMessage("mensaje", body, client, false, props)
 
 				// El usuario provee el nombre de usuario desde despues de la autenticación en tls
 				case "user":
 					if ok, username := verifyUser(body); ok {
 						client.Username = username
-						util.SendClientMessage("connect", "", client, false, props)
+						util.SendClientMessage("conectado", "", client, false, props)
 					} else {
 						client.Close(false)
 					}
 
 				// El usuario se desconecta
-				case "disconnect":
+				case "desconectar":
 					client.Close(false)
 
 				// El usuario ignora a a otro
-				case "ignore":
+				case "ignorar":
 					client.Ignore(body)
-					util.SendClientMessage("ignoring", body, client, false, props)
+					util.SendClientMessage("ignorando", body, client, false, props)
 
 				// El usuario entra a una sala privada
-				case "enter":
+				case "entrar":
 					if body != "" {
 						client.Room = body
-						util.SendClientMessage("enter", body, client, false, props)
+						util.SendClientMessage("entra", body, client, false, props)
 					}
 
 				// El usuario deja la sala
-				case "leave":
+				case "dejar":
 					if client.Room != LOBBY {
-						util.SendClientMessage("leave", client.Room, client, false, props)
+						util.SendClientMessage("deja", client.Room, client, false, props)
 						client.Room = LOBBY
 					}
 
 				default:
-					util.SendClientMessage("unrecognized", action, client, true, props)
+					util.SendClientMessage("noreconocido", action, client, true, props)
 				}
 			}
 		}
@@ -206,10 +189,8 @@ func getAction(message string) (string, string) {
 	actionRegex, _ := regexp.Compile(`^\/([^\s]*)\s*(.*)$`)
 	res := actionRegex.FindAllStringSubmatch(message, -1)
 
-	body := res[0][2]
-
 	if len(res) == 1 {
-		return res[0][1], string(util.Decode64(body)[:])
+		return res[0][1], string(util.Decode64(res[0][2]))
 	}
 	return "", ""
 }
@@ -217,11 +198,10 @@ func getAction(message string) (string, string) {
 // Verificar pass
 func verifyUser(body string) (bool, string) {
 
-	i := strings.Index(body, "%3A%3A%3A")
+	i := strings.Index(body, ":::")
 	username := body[:i]
-	fmt.Print(body[:i])
 
-	pass := util.Decode64(body[i+9 : len(body)])
+	pass := util.Decode64(body[i+3 : len(body)])
 
 	u, ok := gUsers[username] // ¿existe ya el usuario?
 	if !ok {

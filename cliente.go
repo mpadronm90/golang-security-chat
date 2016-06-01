@@ -3,26 +3,20 @@ package main
 
 import (
 	"./util"
-	/*"bytes"
-	"compress/zlib"
-	"crypto/aes"
-	"crypto/cipher"*/
+	"bufio"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
 	"crypto/tls"
-	/*"encoding/base64"*/
 	"encoding/json"
 	"fmt"
-	/*"io"*/
-	"bufio"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
-	/*"golang.org/x/crypto/scrypt"*/)
+)
 
 // mensaje de entrada de expresiones regulares (busque un comando /lo_que_sea )
 var standardInputMessageRegex, _ = regexp.Compile(`^\/([^\s]*)\s*(.*)$`)
@@ -42,11 +36,16 @@ func main() {
 
 // gestiona el modo cliente
 func client() {
-	fmt.Println("CHAT SEGURO")
-	fmt.Println(" - Loguearte (1)")
-	fmt.Println(" - Crear usuario (2)")
-	fmt.Println(" - Salir (0)")
-	fmt.Print("Selecciona una opcion: ")
+	fmt.Println("-------------------------------------")
+	fmt.Println("         GOCHA - CHAT SEGURO         ")
+	fmt.Println("-----   ---------------------   -----")
+	fmt.Println("                                     ")
+	fmt.Println(" 1 - ENTRAR AL LOBBY                 ")
+	fmt.Println(" 2 - NUEVO USUARIO                   ")
+	fmt.Println(" 3 - SALIR                           ")
+	fmt.Println("                                     ")
+	fmt.Print("   Seleccione una opcion:              ")
+	fmt.Print("                                       ")
 
 	switch util.ReadInput() {
 	case "1":
@@ -60,7 +59,7 @@ func client() {
 		NewUser()
 		client()
 
-	case "0":
+	case "3":
 		Salir()
 
 	default:
@@ -191,26 +190,26 @@ func watchForConsoleInput(conn net.Conn) {
 
 			if command.Command == "" {
 				// un simple mensaje
-				sendCommand("message", message, conn)
+				sendCommand("mensaje", message, conn)
 			} else {
 				switch command.Command {
 
 				// entrar a una sala privada
-				case "enter":
-					sendCommand("enter", command.Body, conn)
+				case "entrar":
+					sendCommand("entrar", command.Body, conn)
 
 				// ignorar a alguien
-				case "ignore":
-					sendCommand("ignore", command.Body, conn)
+				case "ignorar":
+					sendCommand("ignorar", command.Body, conn)
 
 				// dejar la sala
-				case "leave":
+				case "dejar":
 					// dejar la sala, no permite salas de salas
-					sendCommand("leave", "", conn)
+					sendCommand("dejar", "", conn)
 
 				// desconectar del servidor
-				case "disconnect":
-					sendCommand("disconnect", "", conn)
+				case "desconectar":
+					sendCommand("desconectar", "", conn)
 					client()
 
 				default:
@@ -235,54 +234,46 @@ func watchForConnectionInput(username string, password string, properties util.P
 			switch Command.Command {
 
 			//listo
-			case "ready":
+			case "listo":
 				message := autTCP(username, password)
 				sendCommand("user", message, conn)
 
 			// conectado
-			case "connect":
+			case "conectado":
 				fmt.Printf(properties.HasEnteredTheLobbyMessage+"\n", Command.Username)
 
 			// desconectado
-			case "disconnect":
+			case "desconectado":
 				fmt.Printf(properties.HasLeftTheLobbyMessage+"\n", Command.Username)
 
 			// ha entrado a...
-			case "enter":
+			case "entra":
 				fmt.Printf(properties.HasEnteredTheRoomMessage+"\n", Command.Username, Command.Body)
 
 			// ha salido de...
-			case "leave":
+			case "deja":
 				fmt.Printf(properties.HasLeftTheRoomMessage+"\n", Command.Username, Command.Body)
 
 			// el usuario ha enviado un mensaje
-			case "message":
+			case "mensaje":
 				if Command.Username != username {
 					fmt.Printf(properties.ReceivedAMessage+"\n", Command.Username, Command.Body)
 				}
 
 			// ignorando
-			case "ignoring":
+			case "ignorando":
 				fmt.Printf(properties.IgnoringMessage+"\n", Command.Body)
 			}
 		}
 	}
 }
 
-// send a command to the chat server
-// commands are in the form of /command {command specific body content}\n
 func sendCommand(command string, body string, conn net.Conn) {
 
-	// hash con SHA512 del body
-	bodyClient := sha512.Sum512([]byte(body))
-	bodyEncode := bodyClient[:32] // una mitad para el login (256 bits)
-
-	message := fmt.Sprintf("/%v %v\n", util.Encode(command), util.Encode(util.Encode64(bodyEncode))
+	message := fmt.Sprintf("/%v %v\n", util.Encode(command), util.Encode(util.Encode64([]byte(body))))
 	conn.Write([]byte(message))
 }
 
-// parse the input message and return an Command
-// if there is a command the "Command" will != "", otherwise just Body will exist
 func parseInput(message string) Command {
 	res := standardInputMessageRegex.FindAllStringSubmatch(message, -1)
 	if len(res) == 1 {
@@ -298,7 +289,6 @@ func parseInput(message string) Command {
 	}
 }
 
-// look for "/Command [name] body contents" where [name] is optional
 func parseCommand(message string) Command {
 	res := chatServerResponseRegex.FindAllStringSubmatch(message, -1)
 	if len(res) == 1 {
@@ -309,7 +299,7 @@ func parseCommand(message string) Command {
 			Body:     util.Decode(res[0][3]),
 		}
 	} else {
-		// it's irritating that I can't return a nil value here - must be something I'm missing
+
 		return Command{}
 	}
 }

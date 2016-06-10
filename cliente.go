@@ -30,6 +30,8 @@ type Command struct {
 	Command, Username, Body string
 }
 
+var user util.User
+
 func main() {
 	client()
 }
@@ -49,8 +51,8 @@ func client() {
 
 	switch util.ReadInput() {
 	case "1":
-		if ok, username, password := Login(); ok {
-			chat(username, password)
+		if ok, username := Login(); ok {
+			chat(username)
 		} else {
 			client()
 		}
@@ -122,7 +124,7 @@ func NewUser() {
 	fmt.Println(response.Msg)
 }
 
-func Login() (bool, string, string) {
+func Login() (bool, string) {
 
 	fmt.Println("Introduce tu usuario y tu contraseña")
 
@@ -150,7 +152,11 @@ func Login() (bool, string, string) {
 	defer r.Body.Close()
 
 	fmt.Println(response.Msg)
-	return response.Ok, username, password
+	if response.Ok == true {
+		user.Name = username
+		user.Key = keyLogin
+	}
+	return response.Ok, username
 
 }
 
@@ -159,7 +165,8 @@ func Salir() {
 	fmt.Println("Hasta luego.")
 }
 
-func chat(username string, password string) {
+func chat(username string) {
+
 	properties := util.LoadConfig()
 
 	conn, err := net.Dial("tcp", properties.Hostname+":"+properties.Port)
@@ -168,7 +175,7 @@ func chat(username string, password string) {
 
 	fmt.Print("Modo Chat..." + "\n")
 	// escuchando al servidor y a la consola del usuario
-	go watchForConnectionInput(username, password, properties, conn)
+	go watchForConnectionInput(username, properties, conn)
 	for true {
 		watchForConsoleInput(conn)
 	}
@@ -222,7 +229,7 @@ func watchForConsoleInput(conn net.Conn) {
 
 // escuchar los comandos que vienen desde el servidor de chat
 // ej: alguien ha entrado, alguien ha salido, alguien ha enviado un mensaje
-func watchForConnectionInput(username string, password string, properties util.Properties, conn net.Conn) {
+func watchForConnectionInput(username string, properties util.Properties, conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for true {
@@ -235,8 +242,8 @@ func watchForConnectionInput(username string, password string, properties util.P
 
 			//listo
 			case "listo":
-				message := autTCP(username, password)
-				sendCommand("user", message, conn)
+				//message := autTCP(username, password)
+				sendCommand("user", username, conn)
 
 			// conectado
 			case "conectado":
@@ -270,8 +277,16 @@ func watchForConnectionInput(username string, password string, properties util.P
 
 func sendCommand(command string, body string, conn net.Conn) {
 
-	message := fmt.Sprintf("/%v %v\n", util.Encode(command), util.Encode(util.Encode64([]byte(body))))
-	conn.Write([]byte(message))
+	if command != "user" {
+		// Procedemos a encriptar el mensaje
+		encriptado := util.Encrypt([]byte(body), user.Key)
+		message := fmt.Sprintf("/%v %v\n", util.Encode(command), util.Encode(util.Encode64(encriptado)))
+		conn.Write([]byte(message))
+	} else {
+		message := fmt.Sprintf("/%v %v\n", util.Encode(command), util.Encode(util.Encode64([]byte(body))))
+		conn.Write([]byte(message))
+	}
+
 }
 
 func parseInput(message string) Command {
@@ -291,6 +306,7 @@ func parseInput(message string) Command {
 
 func parseCommand(message string) Command {
 	res := chatServerResponseRegex.FindAllStringSubmatch(message, -1)
+
 	if len(res) == 1 {
 		// we've got a match
 		return Command{
@@ -304,6 +320,7 @@ func parseCommand(message string) Command {
 	}
 }
 
+/*
 func autTCP(username string, password string) string {
 	// hash con SHA512 de la contraseña
 	keyClient := sha512.Sum512([]byte(password))
@@ -311,3 +328,4 @@ func autTCP(username string, password string) string {
 
 	return username + ":::" + util.Encode64(keyLogin)
 }
+*/

@@ -57,6 +57,7 @@ func handler(w http.ResponseWriter, req *http.Request) {
 		if ok {
 			util.Response(w, false, "Usuario ya registrado")
 		} else {
+			u.Key = password
 			gUsers[u.Name] = u
 			util.Response(w, true, "Usuario registrado")
 		}
@@ -105,7 +106,7 @@ func server_chat() {
 		go waitForInput(channel, &client)
 		go handleInput(channel, &client, properties)
 
-		util.SendClientMessage("listo", properties.Port, &client, true, properties)
+		util.SendClientMessage("listo", properties.Port, &client, true, properties, gUsers)
 	}
 }
 
@@ -118,7 +119,7 @@ func waitForInput(out chan string, client *util.Client) {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			// conexion cerrada, quitar al usuario de la lista de chateadores
-			client.Close(true)
+			client.Close(true, gUsers)
 			return
 		}
 		out <- string(line)
@@ -132,65 +133,67 @@ func handleInput(in <-chan string, client *util.Client, props util.Properties) {
 
 	for {
 		message := <-in
+
 		if message != "" {
 
 			message = strings.TrimSpace(message)
-			action, body := getAction(message)
+			action, body := getAction(message, client.Username)
 
 			if action != "" {
+
 				switch action {
 
 				// El ususario envia un mensaje
 				case "mensaje":
-					util.SendClientMessage("mensaje", body, client, false, props)
+					util.SendClientMessage("mensaje", body, client, false, props, gUsers)
 
 				// El usuario provee el nombre de usuario desde despues de la autenticación en tls
 				case "user":
-					if ok, username := verifyUser(body); ok {
-						client.Username = username
-						util.SendClientMessage("conectado", "", client, false, props)
-					} else {
-						client.Close(false)
-					}
+					client.Username = body
+					util.SendClientMessage("conectado", "conectado", client, false, props, gUsers)
 
 				// El usuario se desconecta
 				case "desconectar":
-					client.Close(false)
+					client.Close(false, gUsers)
 
 				// El usuario ignora a a otro
 				case "ignorar":
 					client.Ignore(body)
-					util.SendClientMessage("ignorando", body, client, false, props)
+					util.SendClientMessage("ignorando", body, client, false, props, gUsers)
 
 				// El usuario entra a una sala privada
 				case "entrar":
 					if body != "" {
 						client.Room = body
-						util.SendClientMessage("entra", body, client, false, props)
+						util.SendClientMessage("entra", body, client, false, props, gUsers)
 					}
 
 				// El usuario deja la sala
 				case "dejar":
 					if client.Room != LOBBY {
-						util.SendClientMessage("deja", client.Room, client, false, props)
+						util.SendClientMessage("deja", client.Room, client, false, props, gUsers)
 						client.Room = LOBBY
 					}
 
 				default:
-					util.SendClientMessage("noreconocido", action, client, true, props)
+					util.SendClientMessage("noreconocido", action, client, true, props, gUsers)
 				}
 			}
 		}
 	}
 }
 
-// analizar el contenido del mensaje ( / { acción } { mensaje} ) y devolver los valores individuales
-func getAction(message string) (string, string) {
+// analizar el contenido del mensaje ( / { acción } { mensaje desencriptado} ) y devolver los valores individuales
+func getAction(message, user string) (string, string) {
 	actionRegex, _ := regexp.Compile(`^\/([^\s]*)\s*(.*)$`)
 	res := actionRegex.FindAllStringSubmatch(message, -1)
 
 	if len(res) == 1 {
-		return res[0][1], string(util.Decode64(res[0][2]))
+		if len(user) != 0 {
+			return res[0][1], string(util.Decrypt(util.Decode64(res[0][2]), gUsers[user].Key))
+		} else {
+			return res[0][1], string(util.Decode64(res[0][2]))
+		}
 	}
 	return "", ""
 }

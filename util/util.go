@@ -48,11 +48,11 @@ type Client struct {
 }
 
 // Close the client connection and clenup
-func (client *Client) Close(doSendMessage bool) {
+func (client *Client) Close(doSendMessage bool, users map[string]User) {
 	if doSendMessage {
 		// if we send the close command, the connection will terminate causing another close
 		// which will send the message
-		SendClientMessage("disconnect", "", client, false, client.Properties)
+		SendClientMessage("desconectar", "", client, false, client.Properties, users)
 	}
 	client.Connection.Close()
 	clients = removeEntry(client, clients)
@@ -178,7 +178,7 @@ func removeEntry(client *Client, arr []*Client) []*Client {
 }
 
 // sent a message to all clients (except the sender)
-func SendClientMessage(messageType string, message string, client *Client, thisClientOnly bool, props Properties) {
+func SendClientMessage(messageType string, message string, client *Client, thisClientOnly bool, props Properties, users map[string]User) {
 
 	if thisClientOnly {
 		// this message is only for the provided client
@@ -186,13 +186,15 @@ func SendClientMessage(messageType string, message string, client *Client, thisC
 		fmt.Fprintln(client.Connection, message)
 
 	} else if client.Username != "" {
+		// construct the payload to be sent to clients
+
+		payload := fmt.Sprintf("/%v [%v] %v", messageType, client.Username, message)
+
 		// this message is for all but the provided client
 		LogAction(messageType, message, client, props)
 
-		// construct the payload to be sent to clients
-		payload := fmt.Sprintf("/%v [%v] %v", messageType, client.Username, message)
-
 		for _, _client := range clients {
+
 			// write the message to the client
 			if (thisClientOnly && _client.Username == client.Username) ||
 				(!thisClientOnly && _client.Username != "") {
@@ -320,6 +322,7 @@ type User struct {
 	Hash []byte            // hash de la contraseña
 	Salt []byte            // sal para la contraseña
 	Data map[string]string // datos adicionales del usuario
+	Key  []byte
 }
 
 // función para comprobar errores (ahorra escritura)
